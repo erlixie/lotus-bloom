@@ -49,7 +49,9 @@ window.__log = [];
     border-radius:14px; overflow:hidden;
     box-shadow:0 0 120px rgba(120,200,210,.13), 0 10px 46px rgba(0,0,0,.55);
     border:1px solid rgba(255,255,255,.04); background:#04100f;}
-  #flowerCanvas{width:100%; height:100%; display:block; background:#04100f;}
+  #flowerCanvas{width:100%; height:100%; display:block; background:#04100f;
+    touch-action:none; -ms-touch-action:none; cursor:grab;}
+  .stage{touch-action:none;}
   #flowerFallback{width:100%; height:100%; object-fit:contain; display:none; background:#04100f;}
   .vignette{position:absolute; inset:0; pointer-events:none;
     background:radial-gradient(120% 92% at 50% 50%, transparent 56%, rgba(0,0,0,.42) 100%);}
@@ -159,6 +161,13 @@ window.__log = [];
   .gate.err .g-err{display:block;}
   .gate.err .g-note{display:none;}
 
+  /* 无摄像头时的旁路：不用摄像头，直接拖动看花 */
+  .g-skip{display:none; margin-top:2px; padding:8px 4px; background:none; border:0;
+    font-family:var(--kai); font-size:12.5px; letter-spacing:.22em; cursor:pointer;
+    color:rgba(238,247,244,.34); border-bottom:1px solid rgba(238,247,244,.14);}
+  .g-skip:hover{color:rgba(238,247,244,.62);}
+  .gate.err .g-skip{display:inline-block;}
+
   /* 加载条（模型下载进度） */
   .prog{width:min(46vw,260px); height:1px; background:rgba(255,255,255,.10); position:relative;
     overflow:hidden; margin-top:4px;}
@@ -253,6 +262,7 @@ window.__log = [];
     <div class="prog" id="prog" style="display:none"><i id="progBar"></i></div>
     <div class="g-note" id="gateNote">点击任意处开始</div>
     <button class="g-btn" id="gateBtn">重新授权</button>
+    <button class="g-skip" id="gateSkip">没有摄像头，改用手指／鼠标拖动</button>
   </div>
 
   <!-- 手部识别模型（MediaPipe tasks-vision HandLandmarker，本地离线版） -->
@@ -278,6 +288,7 @@ window.__log = [];
   const gateErr   = document.getElementById('gateErr');
   const gateNote  = document.getElementById('gateNote');
   const gateBtn   = document.getElementById('gateBtn');
+  const gateSkip  = document.getElementById('gateSkip');
   const prog      = document.getElementById('prog');
   const progBar   = document.getElementById('progBar');
   const barLeft   = document.getElementById('barLeft');
@@ -754,6 +765,17 @@ window.__log = [];
     if (e.target === gateBtn) retryCamera();
   });
   gateBtn.addEventListener('click', e => { e.stopPropagation(); if (started) retryCamera(); });
+
+  // 无摄像头也不挡路：关掉提示，改用拖动 / 滑动
+  gateSkip.addEventListener('click', e => {
+    e.stopPropagation();
+    gate.classList.remove('err');
+    gate.classList.add('hide');
+    camBox.classList.add('hide');
+    gateNote.style.display = 'none';
+    setState('手动演示', false);
+    barLeft.textContent = '拖动或滑动，即可让花开合';
+  });
   document.addEventListener('keydown', e => {
     if ((e.key === 'Enter' || e.key === ' ') && !started) start();
     if (e.key === 'd' || e.key === 'D') document.body.classList.toggle('dbg-on');
