@@ -1,0 +1,480 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>指尖花开 · 手势控制绽放</title>
+<link rel="icon" href="data:," />
+<style>
+  :root{
+    --teal:#7fd6c4; --pink:#ff9ec4; --ink:#e8f3f1; --muted:#9fb4b2;
+    --line:rgba(255,255,255,.10);
+  }
+  *{box-sizing:border-box;}
+  html,body{height:100%;margin:0;}
+  body{
+    font-family:"PingFang SC","Microsoft YaHei",system-ui,-apple-system,Segoe UI,Roboto,sans-serif;
+    background:radial-gradient(120% 120% at 50% 18%, #10313a 0%, #0a1a20 42%, #05080a 100%);
+    color:var(--ink); overflow:hidden; user-select:none; -webkit-user-select:none;
+  }
+
+  /* 顶部题名（极轻，不夺花之势） */
+  .brand{position:fixed; left:26px; top:22px; z-index:6; font-size:15px; letter-spacing:.22em;
+    font-weight:500; color:rgba(232,243,241,.30);}
+  .brand small{display:block; font-size:9px; letter-spacing:.34em; color:rgba(232,243,241,.16);
+    margin-top:5px; font-weight:400;}
+
+  /* 主舞台：花是唯一主角（左右让出题款的位置，留白才见中国画的呼吸） */
+  .stage{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:2;}
+  .flower-wrap{position:relative; height:min(80vh, max(220px, calc((100vw - 640px) * 0.5625)));
+    max-height:80vh; aspect-ratio:16/9;
+    border-radius:20px; overflow:hidden; box-shadow:0 0 90px rgba(120,200,210,.16), 0 10px 44px rgba(0,0,0,.55);
+    border:1px solid rgba(255,255,255,.05); background:#04100f;}
+  #flowerCanvas{width:100%; height:100%; display:block; background:#04100f;}
+  #flowerFallback{width:100%; height:100%; object-fit:contain; display:none; background:#04100f;}
+  .vignette{position:absolute; inset:0; pointer-events:none;
+    background:radial-gradient(120% 90% at 50% 50%, transparent 55%, rgba(0,0,0,.45) 100%);}
+
+  /* ===== 左侧题款：竖排两句，如画上题跋 ===== */
+  .side-left{position:fixed; left:clamp(22px, 4.4vw, 84px); top:50%; transform:translateY(-50%);
+    z-index:6; display:flex; flex-direction:column; align-items:center; gap:clamp(14px, 2.2vh, 26px);
+    pointer-events:none;}
+  .poem{writing-mode:vertical-rl; text-orientation:upright;
+    font-family:"STXingkai","华文行楷","Kaiti SC",STKaiti,KaiTi,"楷体","Songti SC","Noto Serif SC",serif;
+    font-size:clamp(21px, 2.0vw, 33px); line-height:1.6; letter-spacing:.2em;
+    color:rgba(238,247,244,.82);
+    text-shadow:0 0 26px rgba(150,215,205,.16), 0 1px 0 rgba(0,0,0,.4);}
+  .poem span{display:block;}
+  .poem span + span{margin-block-start:.42em;}
+  .poem-sub{font-family:"Kaiti SC",STKaiti,KaiTi,"楷体","Songti SC",serif;
+    font-size:12px; letter-spacing:.26em; color:rgba(232,243,241,.38); white-space:nowrap;}
+  .seal{width:26px; height:26px; border-radius:3px; display:flex; align-items:center; justify-content:center;
+    background:rgba(174,56,44,.52); color:rgba(255,242,237,.88);
+    font-family:"Kaiti SC",STKaiti,KaiTi,"楷体",serif; font-size:13px; line-height:1;
+    transform:rotate(-2.5deg); box-shadow:0 0 18px rgba(174,56,44,.16);}
+
+  /* ===== 右侧题识：英文名 + 寓意 ===== */
+  .side-right{position:fixed; right:clamp(22px, 4.4vw, 84px); top:50%; transform:translateY(-50%);
+    z-index:6; text-align:right; pointer-events:none;}
+  .en{font-family:Georgia,"Times New Roman","Songti SC",serif; font-size:clamp(14px, 1.2vw, 19px);
+    letter-spacing:.42em; text-transform:uppercase; color:rgba(238,247,244,.60);}
+  .lat{font-family:Georgia,"Times New Roman",serif; font-style:italic; font-size:11px;
+    letter-spacing:.05em; color:rgba(232,243,241,.26); margin-top:10px;}
+  .rule{height:1px; width:44px; margin:16px 0 14px auto;
+    background:linear-gradient(90deg, rgba(255,255,255,0), rgba(232,243,241,.22));}
+  .mean-t{font-size:10px; letter-spacing:.34em; color:rgba(127,214,196,.48); margin-bottom:9px;}
+  .mean-b{font-family:"Kaiti SC",STKaiti,KaiTi,"楷体","Songti SC",serif; font-size:13px;
+    letter-spacing:.16em; line-height:1.95; color:rgba(238,247,244,.48);}
+  .mean-s{font-size:10px; letter-spacing:.2em; color:rgba(232,243,241,.22); margin-top:7px;}
+
+  /* 摄像头小窗（看自己的手，悄然置于右下一隅） */
+  .cam{position:fixed; right:20px; bottom:74px; width:250px; height:188px; border-radius:14px;
+    overflow:hidden; border:1px solid rgba(255,255,255,.07); background:#000; z-index:6;
+    box-shadow:0 8px 30px rgba(0,0,0,.5); opacity:.92;}
+  .cam video{width:100%; height:100%; object-fit:fill; transform:scaleX(-1);}
+  .cam canvas{position:absolute; inset:0; width:100%; height:100%; transform:scaleX(-1);}
+  .cam-label{position:absolute; left:10px; top:8px; font-size:10px; letter-spacing:.15em;
+    color:rgba(255,255,255,.45); background:rgba(0,0,0,.28); padding:2px 7px; border-radius:999px;}
+  .cam.hide{display:none;}
+
+  /* 右下角微信息：淡到几乎无痕，凝神可见 */
+  .meta{position:fixed; right:24px; bottom:18px; z-index:6; text-align:right;
+    font-size:10.5px; line-height:1.9; letter-spacing:.08em;
+    color:rgba(232,243,241,.24); pointer-events:none;}
+  .meta div{transition:opacity .4s;}
+
+  /* 加载遮罩 */
+  .loader{position:fixed; inset:0; z-index:20; display:flex; flex-direction:column; gap:14px;
+    align-items:center; justify-content:center; background:rgba(4,10,12,.94); transition:opacity .5s;}
+  .loader.hide{opacity:0; pointer-events:none;}
+  .spinner{width:40px; height:40px; border-radius:50%; border:2px solid rgba(255,255,255,.12);
+    border-top-color:rgba(127,214,196,.8); animation:spin 1.1s linear infinite;}
+  .loader p{font-size:12px; color:rgba(232,243,241,.36); letter-spacing:.14em; margin:0;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+
+  /* 窄屏：左右题款收起，诗句改横排落在左下，寓意隐去，画面仍以花为主 */
+  @media (max-width:1100px){
+    .flower-wrap{height:min(84vh, max(200px, calc((100vw - 40px) * 0.5625))); max-height:84vh;}
+    .side-left{left:18px; bottom:14px; top:auto; transform:none; align-items:flex-start; gap:7px;}
+    .side-left .poem{writing-mode:horizontal-tb; font-size:clamp(17px, 4vw, 22px); letter-spacing:.14em;}
+    .side-left .poem span{display:inline;}
+    .side-left .poem span + span{margin-block-start:0; margin-inline-start:.5em;}
+    .side-left .poem-sub{font-size:10.5px; letter-spacing:.2em;}
+    .side-left .seal{display:none;}
+    .side-right{display:none;}
+  }
+
+  @media (max-width:640px){
+    .cam{width:150px; height:113px; right:12px; bottom:52px;}
+    .meta{right:14px; bottom:12px; font-size:9.5px;}
+    .brand{left:16px; top:14px; font-size:13px;}
+  }
+</style>
+</head>
+<body>
+  <div class="brand">指尖花开<small>GESTURE · BLOOM</small></div>
+
+  <!-- 左：题款（诗句竖排 · 小语 · 朱印） -->
+  <div class="side-left">
+    <div class="poem"><span>指尖轻拈</span><span>莲心自开</span></div>
+    <div class="poem-sub">用手指唤醒荷花</div>
+    <div class="seal">莲</div>
+  </div>
+
+  <!-- 右：题识（英文名 · 寓意） -->
+  <div class="side-right">
+    <div class="en">Lotus</div>
+    <div class="lat">Nelumbo nucifera</div>
+    <div class="rule"></div>
+    <div class="mean-t">寓意</div>
+    <div class="mean-b">出淤泥而不染</div>
+    <div class="mean-b">濯清涟而不妖</div>
+    <div class="mean-s">清净 · 坚贞 · 吉祥</div>
+  </div>
+
+  <div class="stage">
+    <div class="flower-wrap">
+      <canvas id="flowerCanvas" width="1440" height="810"></canvas>
+      <video id="flowerFallback" playsinline muted preload="auto"></video>
+      <div class="vignette"></div>
+    </div>
+  </div>
+
+  <div class="cam" id="camBox">
+    <video id="cam" playsinline muted></video>
+    <canvas id="overlay" width="640" height="480"></canvas>
+    <div class="cam-label">你的手</div>
+  </div>
+
+  <div class="meta" id="meta">
+    <div id="metaHint">花苞 · 拇指食指捏紧</div>
+    <div id="metaNum">张开度 0%</div>
+  </div>
+
+  <div class="loader" id="loader">
+    <div class="spinner"></div>
+    <p id="loaderText">正在准备…</p>
+  </div>
+
+  <!-- 手部识别模型（MediaPipe tasks-vision HandLandmarker，本地离线版） -->
+  <script type="module">
+    import { HandLandmarker, FilesetResolver } from "./vision_bundle.js";
+    window.HandLandmarker = HandLandmarker;
+    window.FilesetResolver = FilesetResolver;
+  </script>
+
+  <script>
+  "use strict";
+
+  // ===================== 元素 =====================
+  const canvas    = document.getElementById('flowerCanvas');
+  const ctx       = canvas.getContext('2d', { alpha: false });
+  const videoFB   = document.getElementById('flowerFallback');
+  const cam       = document.getElementById('cam');
+  const overlay   = document.getElementById('overlay');
+  const octx      = overlay.getContext('2d');
+  const metaHint  = document.getElementById('metaHint');
+  const metaNum   = document.getElementById('metaNum');
+  const loader    = document.getElementById('loader');
+  const loaderText= document.getElementById('loaderText');
+  const camBox    = document.getElementById('camBox');
+
+  // ===================== 状态 =====================
+  const FRAME_COUNT = 192;          // 8 秒 × 24fps，预解码为逐帧图
+  const frames = new Array(FRAME_COUNT);
+  let frameLoaded = 0;
+  let mode = 'frames';              // 'frames' 逐帧图（默认，零延迟）| 'video' 回退到跳帧
+  let ready = false;
+  let duration = 0;
+  let lastT = -1;
+
+  let targetOpen = 0;               // 目标张开度 0~1
+  let smoothOpen = 0;               // 平滑后的张开度
+  let camOk = false;
+
+  const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+
+  // 捏合比 → 张开度：量程放宽 + 两端死区，同样一指变动，花开得更缓（降灵敏）
+  const PINCH_MIN = 0.32, PINCH_MAX = 1.62;
+  const pinchToOpen = r => {
+    const t = (r - PINCH_MIN) / (PINCH_MAX - PINCH_MIN);
+    return t <= 0 ? 0 : t >= 1 ? 1 : t;
+  };
+  const MAX_RATE = 1.35;   // 花开速度上限：每秒最多推进 135%，手一抖花不会"跳"，而是缓缓追上
+
+  const frameSrc = i => 'frames/f_' + String(i + 1).padStart(3, '0') + '.webp';
+
+  // ===================== 逐帧图加载（取代视频跳帧）=====================
+  function preloadFrames(){
+    let done = 0;
+    for (let i = 0; i < FRAME_COUNT; i++){
+      const img = new Image();
+      img.decoding = 'async';
+      img.onload  = () => settle(i, img, true);
+      img.onerror = () => settle(i, img, false);
+      img.src = frameSrc(i);
+      frames[i] = img;
+    }
+    function settle(i, img, ok){
+      done++;
+      if (ok) frameLoaded++;
+      if (i === 0 && !ok){ fallbackToVideo(); return; }
+      if (i === 0 && ok){
+        ready = true;
+        drawIdx(0, true);
+        loader.classList.add('hide');
+      }
+      if (done === FRAME_COUNT && frameLoaded === 0) fallbackToVideo();
+      if (done < FRAME_COUNT) loaderText.textContent = '正在准备画面 ' + done + ' / ' + FRAME_COUNT;
+    }
+  }
+
+  // 画第 idx 帧；若该帧尚未载入，先就近取一张已载入的顶上（仅开场极短瞬间会触发）
+  let lastDrawnIdx = -1;
+  function drawIdx(idx, force){
+    if (mode !== 'frames') return;
+    if (!force && idx === lastDrawnIdx) return;
+    let j = idx;
+    while (j > 0 && !(frames[j] && frames[j].complete && frames[j].naturalWidth)) j--;
+    const img = frames[j];
+    if (!img || !img.complete || !img.naturalWidth) return;
+    ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    lastDrawnIdx = (j === idx) ? idx : -1;
+  }
+
+  // 逐帧图不可用时，退回视频跳帧模式
+  function fallbackToVideo(){
+    if (mode === 'video') return;
+    mode = 'video';
+    canvas.style.display = 'none';
+    videoFB.style.display = 'block';
+    videoFB.src = 'lotus-bloom.mp4';
+    videoFB.addEventListener('loadedmetadata', () => {
+      duration = videoFB.duration || 0;
+      ready = true;
+      loader.classList.add('hide');
+      videoFB.play().then(() => { videoFB.pause(); videoFB.currentTime = 0; }).catch(() => {});
+    }, { once: true });
+  }
+
+  // ===================== 渲染主循环 =====================
+  let prevNow = performance.now();
+  let lastHint = '';
+
+  function loop(){
+    const now = performance.now();
+    let dt = (now - prevNow) / 1000;
+    prevNow = now;
+    if (dt > 0.12) dt = 0.12;
+    if (dt <= 0) dt = 0.016;
+
+    if (ready){
+      // 降灵敏第二重：更大的时间常数 + 逐帧限速，抖动被"抹平"成缓慢的呼吸感
+      const err = targetOpen - smoothOpen;
+      const tau = Math.abs(err) > 0.10 ? 0.048 : 0.100;
+      let step = err * (1 - Math.exp(-dt / tau));
+      const lim = MAX_RATE * dt;
+      if (step >  lim) step =  lim;
+      if (step < -lim) step = -lim;
+      smoothOpen += step;
+      // 死区：差值已极小就不再追，免得花在原点附近来回"筛"
+      if (Math.abs(targetOpen - smoothOpen) < 0.004) smoothOpen = targetOpen;
+
+      if (mode === 'frames'){
+        drawIdx(Math.round(smoothOpen * (FRAME_COUNT - 1)));
+      } else if (duration > 0){
+        const t = smoothOpen * duration;
+        if (Math.abs(t - lastT) > 0.012){ videoFB.currentTime = t; lastT = t; }
+      }
+
+      const h = smoothOpen < 0.08 ? 'h0' : smoothOpen > 0.92 ? 'h1' : 'h2';
+      if (h !== lastHint && camOk){ lastHint = h; setHint(smoothOpen); }
+      metaNum.textContent = '张开度 ' + (smoothOpen * 100).toFixed(0) + '%';
+    }
+    requestAnimationFrame(loop);
+  }
+
+  function setHint(open){
+    if (open < 0.08)      metaHint.textContent = '花苞 · 拇指食指捏紧';
+    else if (open > 0.92) metaHint.textContent = '盛放 · 拇指食指张开';
+    else                  metaHint.textContent = '绽放中 · 半开即半开';
+  }
+
+  // ===================== 手势识别 =====================
+  const HAND_CONNECTIONS = [
+    [0,1],[1,2],[2,3],[3,4],
+    [0,5],[5,6],[6,7],[7,8],
+    [5,9],[9,10],[10,11],[11,12],
+    [9,13],[13,14],[14,15],[15,16],
+    [13,17],[17,18],[18,19],[19,20],
+    [0,17]
+  ];
+
+  function drawHand(lm){
+    const W = overlay.width, H = overlay.height;
+    octx.clearRect(0, 0, W, H);
+    octx.strokeStyle = 'rgba(127,214,196,.85)'; octx.lineWidth = 2;
+    for (let k = 0; k < HAND_CONNECTIONS.length; k++){
+      const a = HAND_CONNECTIONS[k][0], b = HAND_CONNECTIONS[k][1];
+      octx.beginPath();
+      octx.moveTo(lm[a].x * W, lm[a].y * H);
+      octx.lineTo(lm[b].x * W, lm[b].y * H);
+      octx.stroke();
+    }
+    octx.fillStyle = 'rgba(255,158,196,.9)';
+    for (let k = 0; k < lm.length; k++){
+      octx.beginPath();
+      octx.arc(lm[k].x * W, lm[k].y * H, 2.6, 0, Math.PI * 2);
+      octx.fill();
+    }
+  }
+
+  let ratioSmooth = null;
+  let lastStateAt = 0;
+  let lastRatioForDiag = 0;
+  let missingFrames = 0;
+  let hintIsMissing = false;
+
+  function handleResults(res, detectMs){
+    const handsFound = res.landmarks && res.landmarks.length > 0;
+    const now = performance.now();
+    if (handsFound){
+      missingFrames = 0;
+      const lm = res.landmarks[0];
+      drawHand(lm);
+      // 拇指尖(4) 与 食指尖(8) 的距离，用手部尺度(腕0→中指根9)归一化，适配远近与手型
+      const dx = lm[4].x - lm[8].x, dy = lm[4].y - lm[8].y;
+      const dist = Math.hypot(dx, dy);
+      const sx = lm[0].x - lm[9].x, sy = lm[0].y - lm[9].y;
+      const scale = Math.hypot(sx, sy) || 1e-6;
+      const ratio = dist / scale;                    // 捏紧≈0.25，全张≈1.6
+      // 降灵敏第一重：对"距离比"施以更重的滤波，抑制关键点抖动（滤因比滤果自然）
+      ratioSmooth = (ratioSmooth === null) ? ratio : ratioSmooth + 0.34 * (ratio - ratioSmooth);
+      lastRatioForDiag = ratioSmooth;
+      targetOpen = pinchToOpen(ratioSmooth);
+      detMsSmooth = detMsSmooth * 0.8 + (detectMs || 0) * 0.2;
+      // 手回来后，把"未检测到手"的提示撤掉，恢复花态文字
+      if (hintIsMissing){ hintIsMissing = false; lastHint = ''; setHint(smoothOpen); }
+    } else {
+      missingFrames++;
+      octx.clearRect(0, 0, overlay.width, overlay.height);
+      // 连续丢失才提示，避免一瞬间的抖动就跳字
+      if (missingFrames > 12 && now - lastStateAt > 400){
+        lastStateAt = now;
+        hintIsMissing = true;
+        metaHint.textContent = '未检测到手 · 请把手放入右下小窗';
+      }
+    }
+  }
+
+  function camUnavailable(msg){
+    camBox.classList.add('hide');
+    loader.classList.add('hide');
+    metaHint.textContent = msg || '摄像头未启用';
+    metaNum.textContent = '';
+  }
+
+  function canUseCamera(){
+    const loc = window.location;
+    const isLocal = loc.hostname === 'localhost' || loc.hostname === '127.0.0.1' || loc.hostname === '[::1]';
+    return (loc.protocol === 'https:' || (loc.protocol === 'http:' && isLocal)) &&
+           !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
+  }
+
+  // ===================== 识别循环（自调频，给渲染让路）=====================
+  let handLandmarker = null;
+  let lastVideoTime = -1;
+  let lastDetectAt = 0;
+  let detMsSmooth = 0;
+
+  function detectLoop(ts){
+    if (!handLandmarker) return;
+    const interval = detMsSmooth > 24 ? 46 : (detMsSmooth > 16 ? 36 : 28);
+    if (cam.readyState >= 2 && cam.videoWidth > 0 &&
+        cam.currentTime !== lastVideoTime && (ts - lastDetectAt) >= interval){
+      lastDetectAt = ts;
+      lastVideoTime = cam.currentTime;
+      const t0 = performance.now();
+      try {
+        const res = handLandmarker.detectForVideo(cam, ts);
+        handleResults(res, performance.now() - t0);
+      } catch (e){
+        console.warn('[手势] 检测异常：', e);
+      }
+    }
+    requestAnimationFrame(detectLoop);
+  }
+
+  async function bootGesture(){
+    if (typeof window.HandLandmarker === 'undefined' || typeof window.FilesetResolver === 'undefined'){
+      camUnavailable('手势模型未载入 · 请检查网页文件');
+      return;
+    }
+    try {
+      const vision = await window.FilesetResolver.forVisionTasks("./wasm");
+      const MODEL_URLS = [
+        "./hand_landmarker.task",
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/latest/hand_landmarker.task",
+        "https://github.com/sanderdesnaijer/mediapipe-model-mirrors/releases/download/v1/hand_landmarker.task"
+      ];
+      let lastErr = null;
+      for (const url of MODEL_URLS){
+        for (const delegate of ["GPU", "CPU"]){
+          try {
+            handLandmarker = await window.HandLandmarker.createFromOptions(vision, {
+              baseOptions: { modelAssetPath: url, delegate },
+              runningMode: "VIDEO",
+              numHands: 1
+            });
+            console.log('[手势] 模型加载成功：', url, '(' + delegate + ')');
+            break;
+          } catch (e){
+            lastErr = e;
+            console.warn('[手势] 加载失败(' + delegate + ')：', url, e);
+          }
+        }
+        if (handLandmarker) break;
+      }
+      if (!handLandmarker){
+        console.error('[手势] 所有模型地址均失败：', lastErr);
+        camUnavailable('手势模型加载失败');
+        return;
+      }
+    } catch (e){
+      camUnavailable('手势模型加载失败');
+      return;
+    }
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 30 } },
+        audio: false
+      });
+      cam.srcObject = stream;
+      await cam.play();
+      camOk = true;
+      setHint(smoothOpen);
+      requestAnimationFrame(detectLoop);
+    } catch (e){
+      camUnavailable('未授权摄像头 · 请在浏览器允许后刷新');
+    }
+  }
+
+  // ===================== 启动 =====================
+  requestAnimationFrame(loop);
+  preloadFrames();
+
+  window.addEventListener('load', () => {
+    if (!canUseCamera()){
+      camBox.classList.add('hide');
+      loader.classList.add('hide');
+      metaHint.textContent = '摄像头需用 localhost 打开本页';
+      metaNum.textContent = '';
+      return;
+    }
+    loaderText.textContent = '正在准备…';
+    bootGesture();
+  });
+  </script>
+</body>
+</html>
