@@ -5,6 +5,18 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <title>指尖花开 · 手势控制绽放</title>
 <link rel="icon" href="data:," />
+<script>
+/* 错误静默记录（供排查用，界面上看不见） */
+window.__log = [];
+(function(){
+  var w = console.warn, e = console.error;
+  console.warn = function(){ try{ __log.push('W ' + [].slice.call(arguments).map(function(a){return (a&&a.message)||String(a);}).join(' ')); }catch(x){} w.apply(console, arguments); };
+  console.error = function(){ try{ __log.push('E ' + [].slice.call(arguments).map(function(a){return (a&&a.message)||String(a);}).join(' ')); }catch(x){} e.apply(console, arguments); };
+  window.onerror = function(m, s, l){ try{ __log.push('X ' + m + ' @' + l); }catch(x){} };
+  window.addEventListener('unhandledrejection', function(ev){ try{ __log.push('R ' + ((ev.reason && ev.reason.message) || ev.reason)); }catch(x){} });
+  if (__log.length > 60) __log.splice(0, __log.length - 60);
+})();
+</script>
 <style>
   :root{
     --teal:#7fd6c4; --pink:#ff9ec4;
@@ -32,11 +44,11 @@
 
   /* ============ 主舞台：花是唯一主角 ============ */
   .stage{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:2;}
-  .flower-wrap{position:relative; height:min(78vh, max(220px, calc((100vw - 700px) * 0.5625)));
-    max-height:78vh; aspect-ratio:16/9;
-    border-radius:16px; overflow:hidden;
-    box-shadow:0 0 110px rgba(120,200,210,.14), 0 10px 46px rgba(0,0,0,.55);
-    border:1px solid rgba(255,255,255,.045); background:#04100f;}
+  .flower-wrap{position:relative; height:min(80vh, max(220px, calc((100vw - 660px) * 0.5625)));
+    max-height:80vh; aspect-ratio:16/9;
+    border-radius:14px; overflow:hidden;
+    box-shadow:0 0 120px rgba(120,200,210,.13), 0 10px 46px rgba(0,0,0,.55);
+    border:1px solid rgba(255,255,255,.04); background:#04100f;}
   #flowerCanvas{width:100%; height:100%; display:block; background:#04100f;}
   #flowerFallback{width:100%; height:100%; object-fit:contain; display:none; background:#04100f;}
   .vignette{position:absolute; inset:0; pointer-events:none;
@@ -139,7 +151,7 @@
   .gate .g-btn{margin-top:clamp(10px,2vh,20px); padding:11px 26px; border-radius:999px;
     border:1px solid rgba(127,214,196,.32); background:rgba(127,214,196,.06);
     font-family:var(--sans); font-size:11px; letter-spacing:.30em; color:rgba(200,240,232,.82);
-    transition:background .3s, border-color .3s; display:none;}
+    transition:background .3s, border-color .3s; display:none; cursor:pointer;}
   .gate.err .g-btn{display:inline-block;}
   .gate .g-err{max-width:min(78vw,520px); text-align:center; font-family:var(--kai);
     font-size:12.5px; letter-spacing:.16em; line-height:2; color:rgba(255,180,190,.72);
@@ -153,6 +165,13 @@
   .prog i{position:absolute; left:0; top:0; bottom:0; width:0%;
     background:linear-gradient(90deg, rgba(127,214,196,.5), rgba(127,214,196,.9));
     transition:width .3s;}
+
+  /* 调试（按 D 才显） */
+  .dbg{position:fixed; left:14px; bottom:56px; z-index:9; display:none;
+    font:10px/1.7 ui-monospace,Consolas,monospace; letter-spacing:0;
+    color:rgba(180,255,235,.62); background:rgba(0,0,0,.35); padding:8px 11px;
+    border-radius:7px; white-space:pre; pointer-events:none;}
+  body.dbg-on .dbg{display:block;}
 
   /* ============ 窄屏：题款收起为横排 ============ */
   @media (max-width:1100px){
@@ -216,12 +235,14 @@
   </div>
 
   <div class="bar">
-    <div id="barLeft">捏合手指，控制花朵开合</div>
+    <div id="barLeft">拇指与食指的开合，决定花的开谢</div>
     <div class="bar-r">
       <div id="barState"><span class="dot off" id="dot"></span><span id="barStateText">待唤醒</span></div>
       <div class="num" id="barNum">0%</div>
     </div>
   </div>
+
+  <div class="dbg" id="lotusDbg"></div>
 
   <!-- 首屏：轻触唤醒 -->
   <div class="gate" id="gate">
@@ -230,7 +251,7 @@
     <div class="g-s">Enable Camera</div>
     <div class="g-err" id="gateErr"></div>
     <div class="prog" id="prog" style="display:none"><i id="progBar"></i></div>
-    <div class="g-note" id="gateNote">点击屏幕任意处开始 · 画面只在本机处理，不上传</div>
+    <div class="g-note" id="gateNote">点击任意处开始</div>
     <button class="g-btn" id="gateBtn">重新授权</button>
   </div>
 
@@ -239,6 +260,7 @@
     import { HandLandmarker, FilesetResolver } from "./vision_bundle.js";
     window.HandLandmarker = HandLandmarker;
     window.FilesetResolver = FilesetResolver;
+    window.__visionLibReady = true;
   </script>
 
   <script>
@@ -262,6 +284,7 @@
   const barStateText = document.getElementById('barStateText');
   const barNum    = document.getElementById('barNum');
   const dot       = document.getElementById('dot');
+  const dbgEl     = document.getElementById('lotusDbg');
 
   // ===================== 状态 =====================
   const FRAME_COUNT = 192;
@@ -276,17 +299,10 @@
   let smoothOpen = 0;
   let camOk = false;
   let started = false;
-  let modelDone = false;
+  let modelReady = false;
 
   const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
-
-  // 捏合比 → 张开度（量程放宽 + 两端死区，已降灵敏）
-  const PINCH_MIN = 0.32, PINCH_MAX = 1.62;
-  const pinchToOpen = r => {
-    const t = (r - PINCH_MIN) / (PINCH_MAX - PINCH_MIN);
-    return t <= 0 ? 0 : t >= 1 ? 1 : t;
-  };
-  const MAX_RATE = 1.35;
+  const MAX_RATE = 1.6;
 
   const frameSrc = i => 'frames/f_' + String(i + 1).padStart(3, '0') + '.webp';
 
@@ -361,7 +377,7 @@
 
     if (ready){
       const err = targetOpen - smoothOpen;
-      const tau = Math.abs(err) > 0.10 ? 0.048 : 0.100;
+      const tau = Math.abs(err) > 0.10 ? 0.042 : 0.090;
       let step = err * (1 - Math.exp(-dt / tau));
       const lim = MAX_RATE * dt;
       if (step >  lim) step =  lim;
@@ -384,7 +400,7 @@
   }
 
   function setHint(open){
-    if (open < 0.08)      barLeft.textContent = '花苞 · 拇指食指捏紧';
+    if (open < 0.08)      barLeft.textContent = '花苞 · 拇指食指捏合';
     else if (open > 0.92) barLeft.textContent = '盛放 · 拇指食指张开';
     else                  barLeft.textContent = '绽放中 · 随指尖开合';
   }
@@ -394,7 +410,7 @@
     dot.className = 'dot' + (on ? '' : ' off');
   }
 
-  // ===================== 手势识别 =====================
+  // ===================== 手势：手掌归一 + 自适应量程 =====================
   const HAND_CONNECTIONS = [
     [0,1],[1,2],[2,3],[3,4],
     [0,5],[5,6],[6,7],[7,8],
@@ -403,6 +419,57 @@
     [13,17],[17,18],[18,19],[19,20],
     [0,17]
   ];
+
+  const G = {
+    delegate:'—',
+    raw:0, ratioSmooth:null,
+    min:0.18, max:1.35,          // 先验量程：捏合≈0.1~0.35，张开≈0.9~1.9
+    hist: [],
+    det:0, hand:0, lastHandAt:0, missing:0,
+    triedCpu:false
+  };
+
+  // 手掌尺度：腕-中指根 与 食指根-小指根 的均值，抗遮挡比单用腕部稳
+  function palmRef(lm){
+    const d09  = Math.hypot(lm[0].x - lm[9].x,  lm[0].y - lm[9].y);
+    const d517 = Math.hypot(lm[5].x - lm[17].x, lm[5].y - lm[17].y);
+    return Math.max((d09 + d517) * 0.5, 1e-4);
+  }
+
+  // 拇指尖-食指尖 相对手掌的长度（捏合小、张开大）
+  function pinchOf(lm){
+    const d = Math.hypot(lm[4].x - lm[8].x, lm[4].y - lm[8].y);
+    return d / palmRef(lm);
+  }
+
+  /* 量程自适应：以先验区间起算，
+     —— 超出即外扩（保证够得着两端）
+     —— 再以每秒约 4% 的速度向「近 4 秒的真实极值」收拢（保证一定开得满）
+     两手都不极端时，既不会跳变，也不会永远开不到头。 */
+  function trackRange(r){
+    G.hist.push(r);
+    if (G.hist.length > 100) G.hist.shift();
+    let rmin = Infinity, rmax = -Infinity;
+    for (let i = 0; i < G.hist.length; i++){
+      const v = G.hist[i];
+      if (v < rmin) rmin = v;
+      if (v > rmax) rmax = v;
+    }
+
+    if (r < G.min) G.min = r - 0.004;
+    if (r > G.max) G.max = r + 0.004;
+
+    G.min += (rmin - G.min) * 0.005;
+    G.max += (rmax - G.max) * 0.005;
+
+    if (G.max - G.min < 0.55) G.max = G.min + 0.55;
+    G.min = clamp(G.min, 0, 1.1);
+    G.max = clamp(G.max, G.min + 0.55, 3.0);
+
+    let t = (r - G.min) / (G.max - G.min);
+    t = t <= 0 ? 0 : t >= 1 ? 1 : t;
+    return t * t * (3 - 2 * t);          // smoothstep：两端更软，中段更跟手
+  }
 
   function drawHand(lm){
     const W = overlay.width, H = overlay.height;
@@ -423,32 +490,34 @@
     }
   }
 
-  let ratioSmooth = null;
   let lastStateAt = 0;
-  let missingFrames = 0;
   let hintIsMissing = false;
 
   function handleResults(res, detectMs){
-    const handsFound = res.landmarks && res.landmarks.length > 0;
+    G.det++;
     const now = performance.now();
-    if (handsFound){
-      missingFrames = 0;
-      const lm = res.landmarks[0];
+    const hands = res && res.landmarks;
+
+    if (hands && hands.length){
+      G.hand++;
+      G.lastHandAt = now;
+      G.missing = 0;
+      const lm = hands[0];
       drawHand(lm);
-      const dx = lm[4].x - lm[8].x, dy = lm[4].y - lm[8].y;
-      const dist = Math.hypot(dx, dy);
-      const sx = lm[0].x - lm[9].x, sy = lm[0].y - lm[9].y;
-      const scale = Math.hypot(sx, sy) || 1e-6;
-      const ratio = dist / scale;
-      ratioSmooth = (ratioSmooth === null) ? ratio : ratioSmooth + 0.34 * (ratio - ratioSmooth);
-      targetOpen = pinchToOpen(ratioSmooth);
-      detMsSmooth = detMsSmooth * 0.8 + (detectMs || 0) * 0.2;
+
+      const r = pinchOf(lm);
+      if (isFinite(r) && r > 0.02 && r < 6){
+        G.raw = r;
+        G.ratioSmooth = (G.ratioSmooth === null) ? r : G.ratioSmooth + 0.55 * (r - G.ratioSmooth);
+        targetOpen = trackRange(G.ratioSmooth);
+      }
+
       if (hintIsMissing){ hintIsMissing = false; lastHint = ''; setHint(smoothOpen); }
       setState('识别中', true);
     } else {
-      missingFrames++;
+      G.missing++;
       octx.clearRect(0, 0, overlay.width, overlay.height);
-      if (missingFrames > 12 && now - lastStateAt > 400){
+      if (G.missing > 12 && now - lastStateAt > 400){
         lastStateAt = now;
         hintIsMissing = true;
         setState('未检测到手', false);
@@ -458,14 +527,16 @@
   }
 
   let handLandmarker = null;
+  let visionRef = null;
+  let modelBuf = null;
   let lastVideoTime = -1;
   let lastDetectAt = 0;
   let detMsSmooth = 0;
 
   function detectLoop(ts){
-    requestAnimationFrame(detectLoop);          // 先续命：模型未就绪也不会断链
+    requestAnimationFrame(detectLoop);
     if (!handLandmarker || !camOk) return;
-    const interval = detMsSmooth > 24 ? 46 : (detMsSmooth > 16 ? 36 : 28);
+    const interval = detMsSmooth > 26 ? 46 : (detMsSmooth > 17 ? 36 : 28);
     if (cam.readyState >= 2 && cam.videoWidth > 0 &&
         cam.currentTime !== lastVideoTime && (ts - lastDetectAt) >= interval){
       lastDetectAt = ts;
@@ -473,14 +544,21 @@
       const t0 = performance.now();
       try {
         const res = handLandmarker.detectForVideo(cam, ts);
+        detMsSmooth = detMsSmooth * 0.8 + (performance.now() - t0) * 0.2;
         handleResults(res, performance.now() - t0);
       } catch (e){
         console.warn('[手势] 检测异常：', e);
       }
     }
+    // 若长时间一只也认不出，自动从 GPU 换到 CPU 再试
+    if (!G.triedCpu && modelReady && camOk &&
+        performance.now() - G.lastHandAt > 4000){
+      G.triedCpu = true;
+      swapToCpu();
+    }
   }
 
-  // ===================== 模型加载（带进度，不阻塞摄像头）=====================
+  // ===================== 模型加载 =====================
   async function fetchWithProgress(url, onProgress){
     const res = await fetch(url, { cache: 'force-cache' });
     if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -501,68 +579,110 @@
     return out;
   }
 
-  async function bootModel(){
-    if (typeof window.HandLandmarker === 'undefined' || typeof window.FilesetResolver === 'undefined'){
-      setState('模型未载入', false);
+  function waitForLib(timeout){
+    return new Promise(resolve => {
+      const t0 = performance.now();
+      (function tick(){
+        if (window.HandLandmarker && window.FilesetResolver) return resolve(true);
+        if (performance.now() - t0 > timeout) return resolve(false);
+        setTimeout(tick, 120);
+      })();
+    });
+  }
+
+  async function createLM(vision, delegate){
+    const base = { delegate };
+    if (modelBuf) base.modelAssetBuffer = modelBuf;
+    else base.modelAssetPath = './hand_landmarker.task';
+    return await window.HandLandmarker.createFromOptions(vision, {
+      baseOptions: base,
+      runningMode: 'VIDEO',
+      numHands: 1,
+      minHandDetectionConfidence: 0.35,
+      minHandPresenceConfidence: 0.35,
+      minTrackingConfidence: 0.35
+    });
+  }
+
+  async function bootModel(tryNo){
+    tryNo = tryNo || 0;
+    if (!(await waitForLib(tryNo === 0 ? 12000 : 20000))){
+      setState('识别库未载入', false);
+      barLeft.textContent = '识别库载入失败 · 可用鼠标拖动或滚轮演示';
       return false;
     }
-    let vision;
-    try {
-      vision = await window.FilesetResolver.forVisionTasks("./wasm");
-    } catch (e){
-      setState('识别库载入失败', false);
-      return false;
-    }
 
-    let buf = null;
-    try {
-      buf = await fetchWithProgress('./hand_landmarker.task', p => {
-        prog.style.display = 'block';
-        progBar.style.width = Math.round(p * 100) + '%';
-        if (!started) gateNote.textContent = '正在载入识别模型 ' + Math.round(p * 100) + '%';
-        setState('载入模型 ' + Math.round(p * 100) + '%', false);
-      });
-    } catch (e){
-      console.warn('[手势] 模型直取失败，改用内置路径', e);
-    }
-
-    const bases = [];
-    if (buf) bases.push({ modelAssetBuffer: buf });
-    bases.push({ modelAssetPath: './hand_landmarker.task' });
-
-    for (const b of bases){
-      for (const delegate of ['GPU', 'CPU']){
-        try {
-          handLandmarker = await window.HandLandmarker.createFromOptions(vision, {
-            baseOptions: Object.assign({ delegate }, b),
-            runningMode: 'VIDEO',
-            numHands: 1
-          });
-          console.log('[手势] 模型加载成功：', delegate);
-          break;
-        } catch (e){
-          console.warn('[手势] 加载失败(' + delegate + ')', e);
-        }
+    if (!visionRef){
+      try {
+        visionRef = await window.FilesetResolver.forVisionTasks("./wasm");
+      } catch (e){
+        console.warn('[手势] wasm 载入失败', e);
+        setState('识别库载入失败', false);
+        barLeft.textContent = '识别库载入失败 · 可用鼠标拖动演示';
+        return false;
       }
-      if (handLandmarker) break;
     }
 
-    prog.style.display = 'none';
-    modelDone = true;
+    if (!modelBuf){
+      try {
+        modelBuf = await fetchWithProgress('./hand_landmarker.task', p => {
+          prog.style.display = 'block';
+          progBar.style.width = Math.round(p * 100) + '%';
+          if (!started) gateNote.textContent = '正在载入识别模型 ' + Math.round(p * 100) + '%';
+          setState('载入模型 ' + Math.round(p * 100) + '%', false);
+        });
+      } catch (e){
+        console.warn('[手势] 模型直取失败，改用内置路径', e);
+      }
+      prog.style.display = 'none';
+    }
+
+    for (const delegate of ['GPU', 'CPU']){
+      try {
+        handLandmarker = await createLM(visionRef, delegate);
+        G.delegate = delegate;
+        G.lastHandAt = performance.now();
+        console.log('[手势] 模型加载成功：' + delegate);
+        break;
+      } catch (e){
+        console.warn('[手势] 加载失败(' + delegate + ')', e);
+      }
+    }
+
     if (!handLandmarker){
       setState('手势不可用', false);
-      barLeft.textContent = '模型未就绪 · 可拖动花朵或滚轮演示';
+      barLeft.textContent = '模型未就绪 · 可用鼠标拖动或滚轮演示';
       return false;
     }
+
+    modelReady = true;
+    lastVideoTime = -1;
     if (camOk) setState('识别中', true);
     return true;
+  }
+
+  async function swapToCpu(){
+    if (!visionRef || !window.HandLandmarker) return;
+    try {
+      const lm = await createLM(visionRef, 'CPU');
+      const old = handLandmarker;
+      handLandmarker = lm;
+      if (old && old.close) { try { old.close(); } catch (e){} }
+      G.delegate = 'CPU';
+      lastVideoTime = -1;
+      G.lastHandAt = performance.now();
+      console.log('[手势] 已由 GPU 切至 CPU');
+      if (camOk) setState('识别中', true);
+    } catch (e){
+      console.warn('[手势] 切 CPU 失败', e);
+    }
   }
 
   // ===================== 摄像头（先行，不等模型）=====================
   function camErrText(e){
     const n = (e && e.name) || '';
     if (n === 'NotAllowedError' || n === 'PermissionDeniedError')
-      return '摄像头权限被拒绝<br>请点浏览器地址栏左侧的摄像头图标，改为「允许」，再点下方按钮重试';
+      return '摄像头权限被拒绝<br>请点地址栏左侧的摄像头图标，改为「允许」，再点下方按钮重试';
     if (n === 'NotFoundError' || n === 'DevicesNotFoundError')
       return '未找到摄像头设备<br>请确认摄像头已连接、未被禁用';
     if (n === 'NotReadableError' || n === 'TrackStartError')
@@ -607,25 +727,36 @@
     barLeft.textContent = '点击「重新授权」启用摄像头';
   }
 
-  // ===================== 启动（一次点击，两路并行）=====================
+  // ===================== 启动 =====================
   async function start(){
     if (started) return;
     started = true;
     gate.classList.remove('err');
     gate.classList.add('hide');
-    camBox.classList.remove('hide');           // 先占位，出画即见
-
-    startCamera();                              // ① 摄像头不等模型，立刻请求
+    camBox.classList.remove('hide');
+    startCamera();                            // ① 摄像头不等模型，立刻请求
     requestAnimationFrame(detectLoop);
-    bootModel();                                // ② 模型后台下载
+    bootModel();                              // ② 模型后台下载
+  }
+
+  // 重新授权（此前这里被 started 拦住，点了没反应，已修）
+  async function retryCamera(){
+    gate.classList.remove('err');
+    gateNote.style.display = '';
+    const ok = await startCamera();
+    if (ok) gate.classList.add('hide');
+    if (ok && !modelReady && !handLandmarker) bootModel(1);
   }
 
   gate.addEventListener('click', e => {
-    if (e.target === gateBtn || !started) { start(); return; }
-    if (gate.classList.contains('err')) start();
+    if (!started) { start(); return; }
+    if (gate.classList.contains('err')) { retryCamera(); return; }
+    if (e.target === gateBtn) retryCamera();
   });
+  gateBtn.addEventListener('click', e => { e.stopPropagation(); if (started) retryCamera(); });
   document.addEventListener('keydown', e => {
     if ((e.key === 'Enter' || e.key === ' ') && !started) start();
+    if (e.key === 'd' || e.key === 'D') document.body.classList.toggle('dbg-on');
   });
 
   // 摄像头不可用时的兜底演示：拖动 / 滚轮
@@ -647,6 +778,18 @@
     targetOpen = clamp(targetOpen - e.deltaY / 1400, 0, 1);
   }, { passive: true });
 
+  // ===================== 调试（按 D） =====================
+  setInterval(() => {
+    if (!document.body.classList.contains('dbg-on')) return;
+    dbgEl.textContent =
+      'delegate  ' + G.delegate + '\n' +
+      'detect    ' + G.det + '  hand ' + G.hand + '\n' +
+      'ratio     ' + G.raw.toFixed(3) + '\n' +
+      'range     ' + G.min.toFixed(3) + ' → ' + G.max.toFixed(3) + '\n' +
+      'open      ' + targetOpen.toFixed(3) + ' → ' + smoothOpen.toFixed(3) + '\n' +
+      'det cost  ' + detMsSmooth.toFixed(1) + ' ms';
+  }, 200);
+
   // ===================== 启动画面 =====================
   requestAnimationFrame(loop);
   preloadFrames();
@@ -657,6 +800,19 @@
       showGateErr('此页面需用 https 打开<br>当前地址：' + location.protocol);
     }
   });
+
+  // 供自动化验收：喂入一组关键点，等同真实识别一帧
+  window.__lotus = {
+    feed(lm){ handleResults({ landmarks: [lm] }, 10); },
+    fakeCam(){ camOk = true; camBox.classList.remove('hide'); },
+    state(){
+      return { ratio: G.raw, open: targetOpen, smooth: smoothOpen,
+               min: G.min, max: G.max,
+               delegate: G.delegate, det: G.det, hand: G.hand,
+               ready: ready, frames: frameLoaded, mode: mode,
+               log: (window.__log || []).slice(-12) };
+    }
+  };
   </script>
 </body>
 </html>
