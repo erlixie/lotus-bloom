@@ -31,7 +31,10 @@ window.__log = [];
   html,body{height:100%;margin:0;}
   body{
     font-family:var(--sans);
-    background:radial-gradient(120% 120% at 50% 16%, #10313a 0%, #0a1a20 44%, #05080a 100%);
+    /* 底色取自画面四边的实际像素（近乎纯黑，略含一层暗青），
+       画面边缘再向外羽化，二者同色，故看不出"视频框" */
+    background:
+      radial-gradient(126% 104% at 50% 44%, #021117 0%, #010a0e 52%, #010507 78%, #010406 100%);
     color:var(--ink); overflow:hidden; user-select:none; -webkit-user-select:none;
   }
 
@@ -44,17 +47,20 @@ window.__log = [];
 
   /* ============ 主舞台：花是唯一主角 ============ */
   .stage{position:fixed; inset:0; display:flex; align-items:center; justify-content:center; z-index:2;}
+  /* 去掉边框／圆角／投影；四边向外羽化，画面与页面底色同为近乎纯黑，看不出矩形 */
   .flower-wrap{position:relative; height:min(80vh, max(220px, calc((100vw - 660px) * 0.5625)));
     max-height:80vh; aspect-ratio:16/9;
-    border-radius:14px; overflow:hidden;
-    box-shadow:0 0 120px rgba(120,200,210,.13), 0 10px 46px rgba(0,0,0,.55);
-    border:1px solid rgba(255,255,255,.04); background:#04100f;}
-  #flowerCanvas{width:100%; height:100%; display:block; background:#04100f;
+    border-radius:0; overflow:hidden; border:0; box-shadow:none;
+    background:transparent;
+    -webkit-mask-image:radial-gradient(ellipse farthest-side at 50% 48%, #000 54%, rgba(0,0,0,.88) 70%, rgba(0,0,0,.50) 85%, rgba(0,0,0,.14) 95%, rgba(0,0,0,0) 100%);
+    mask-image:radial-gradient(ellipse farthest-side at 50% 48%, #000 54%, rgba(0,0,0,.88) 70%, rgba(0,0,0,.50) 85%, rgba(0,0,0,.14) 95%, rgba(0,0,0,0) 100%);}
+  #flowerCanvas{width:100%; height:100%; display:block; object-fit:contain; background:transparent;
     touch-action:none; -ms-touch-action:none; cursor:grab;}
   .stage{touch-action:none;}
-  #flowerFallback{width:100%; height:100%; object-fit:contain; display:none; background:#04100f;}
+  #flowerFallback{width:100%; height:100%; object-fit:contain; display:none; background:#010406;}
+  /* 只在极外圈极轻地压暗，把画面边缘压到与页面同色，看不出矩形的角 */
   .vignette{position:absolute; inset:0; pointer-events:none;
-    background:radial-gradient(120% 92% at 50% 50%, transparent 56%, rgba(0,0,0,.42) 100%);}
+    background:radial-gradient(112% 96% at 50% 47%, transparent 62%, rgba(1,4,6,.40) 86%, rgba(1,4,6,.72) 100%);}
 
   /* ============================================================
      左侧题款：细线小标 → 大字题句 → 小字注      （版式参「BLOOM / 01」）
@@ -138,7 +144,7 @@ window.__log = [];
   .gate{position:fixed; inset:0; z-index:30; cursor:pointer;
     display:flex; flex-direction:column; align-items:center; justify-content:center;
     gap:clamp(16px,2.6vh,28px);
-    background:radial-gradient(120% 120% at 50% 30%, #10313a 0%, #0a1a20 46%, #05080a 100%);
+    background:radial-gradient(120% 120% at 50% 30%, #0a2530 0%, #061319 46%, #010406 100%);
     transition:opacity .65s ease; }
   .gate.hide{opacity:0; pointer-events:none;}
   .gate .g-line{width:1px; height:clamp(30px,5vh,54px);
