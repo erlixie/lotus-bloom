@@ -559,9 +559,18 @@ window.__log = [];
       try {
         const res = handLandmarker.detectForVideo(cam, ts);
         detMsSmooth = detMsSmooth * 0.8 + (performance.now() - t0) * 0.2;
+        G.detErr = 0;
         handleResults(res, performance.now() - t0);
       } catch (e){
         console.warn('[手势] 检测异常：', e);
+        // 连续报错多半是显卡加速撑不住了（教室一体机的集成显卡跑久了会这样）
+        G.detErr = (G.detErr || 0) + 1;
+        if (G.detErr >= 8 && !G.triedCpu){
+          G.detErr = 0;
+          G.triedCpu = true;
+          barLeft.textContent = '显卡加速不稳，已切到 CPU 识别…';
+          swapToCpu();
+        }
       }
     }
     // 若长时间一只也认不出，自动从 GPU 换到 CPU 再试
@@ -707,30 +716,140 @@ window.__log = [];
     return '摄像头未能启动（' + (n || '未知错误') + '）<br>请点下方按钮重试';
   }
 
-  async function startCamera(){
+  // ---- 流的状态：用于释放与体检 ----
+  let camStream   = null;   // 当前这一路流
+  let camGen      = 0;      // 代号：换流后旧的监听器自动失效
+  let camRecovering = false;
+  let camLastFrameAt = performance.now();
+  let camLastTimeSeen = -1;
+
+  // 必须先 stop 旧流：设备句柄不释放，再请求就是 NotReadableError（"被占用"）
+  function releaseCam(){
+    if (camStream){
+      camStream.getTracks().forEach(t => { try { t.stop(); } catch (e){} });
+      camStream = null;
+    }
+    try { if (cam.srcObject) cam.srcObject = null; } catch (e){}
+    camOk = false;
+  }
+
+  async function startCamera(opts){
+    const silent = !!(opts && opts.silent);
     if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)){
       showGateErr('此浏览器不支持摄像头接口<br>建议用 Edge 或 Chrome 打开');
       return false;
     }
+    // 已经有活的流，就别再抢同一个设备
+    if (camStream && camOk){
+      const t0 = camStream.getVideoTracks()[0];
+      if (t0 && t0.readyState === 'live' && !t0.muted && cam.readyState >= 2) return true;
+    }
+    releaseCam();
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, frameRate: { ideal: 30, max: 30 } },
         audio: false
       });
+      camGen++;
+      camStream = stream;
       cam.srcObject = stream;
       await cam.play();
       camOk = true;
+      camLastFrameAt = performance.now();
+      camLastTimeSeen = -1;
       camBox.classList.remove('hide');
       setState('摄像头已开', true);
       setHint(smoothOpen);
+      bindCamTrack(stream, camGen);
       return true;
     } catch (e){
       console.warn('[摄像头]', e);
-      showGateErr(camErrText(e));
       camOk = false;
+      if (!silent) showGateErr(camErrText(e));
       return false;
     }
   }
+
+  // 断流会先"静音"（muted）再"结束"（ended），两处都接住
+  function bindCamTrack(stream, gen){
+    const vt = stream.getVideoTracks()[0];
+    if (!vt) return;
+    vt.addEventListener('ended', () => {
+      if (gen !== camGen) return;
+      onCamLost('设备已断开');
+    });
+    vt.addEventListener('mute', () => {
+      if (gen !== camGen) return;
+      setTimeout(() => {
+        if (gen !== camGen) return;
+        if (vt.muted || vt.readyState !== 'live') onCamLost('被其他程序占用');
+        else setState('识别中', true);
+      }, 1200);
+    });
+    vt.addEventListener('unmute', () => {
+      if (gen !== camGen) return;
+      setState('识别中', true);
+    });
+  }
+
+  // 掉了就自己接回来，不必劳人点按钮
+  async function onCamLost(reason){
+    if (camRecovering || !started) return;
+    camRecovering = true;
+    camOk = false;
+    setState('摄像头断开', false);
+    barLeft.textContent = '摄像头断开（' + reason + '）· 正在自动重连…';
+    for (let i = 0; i < 4; i++){
+      await new Promise(r => setTimeout(r, i === 0 ? 220 : 900));
+      if (await startCamera({ silent: true })){
+        camRecovering = false;
+        camLastFrameAt = performance.now();
+        camLastTimeSeen = -1;
+        setState('识别中', true);
+        barLeft.textContent = '已自动重新连接摄像头';
+        return;
+      }
+    }
+    camRecovering = false;
+    showGateErr('摄像头断开了<br>多是被视频会议、直播软件抢了，或系统把摄像头休眠了<br>关掉占用摄像头的程序，再点下方按钮重连；也可先用手指拖动演示');
+  }
+
+  // ---- 体检：每秒查一次，静音／结束／画面冻住 都算断 ----
+  setInterval(() => {
+    if (!started || !camOk || camRecovering || document.hidden) return;
+    const vt = camStream && camStream.getVideoTracks()[0];
+    if (!vt || vt.readyState !== 'live'){ onCamLost('设备已断开'); return; }
+    if (vt.muted){ onCamLost('被其他程序占用'); return; }
+    if (cam.currentTime !== camLastTimeSeen){
+      camLastTimeSeen = cam.currentTime;
+      camLastFrameAt = performance.now();
+    } else if (performance.now() - camLastFrameAt > 2600 && cam.readyState >= 2){
+      onCamLost('画面冻结');      // 轨道还在，但没有新帧，常见于系统省电关设备
+    }
+  }, 1000);
+
+  // 切到别的程序、锁屏、投影切换后再回来，先给一个缓冲，再判生死
+  document.addEventListener('visibilitychange', () => {
+    if (!started || document.hidden) return;
+    camLastFrameAt = performance.now();
+    camLastTimeSeen = -1;
+    setTimeout(() => {
+      const vt = camStream && camStream.getVideoTracks()[0];
+      if (!camOk || !vt || vt.readyState !== 'live' || vt.muted) onCamLost('后台待机后断开');
+      else if (cam.paused) cam.play().catch(() => {});
+    }, 700);
+  });
+
+  // 插拔摄像头、设备被禁用／启用
+  if (navigator.mediaDevices && navigator.mediaDevices.addEventListener){
+    navigator.mediaDevices.addEventListener('devicechange', () => {
+      if (started && !camOk) onCamLost('设备变动');
+    });
+  }
+
+  // 关页／刷新前主动放掉设备，免得下次打开被判"被占用"
+  window.addEventListener('pagehide', releaseCam);
+  window.addEventListener('beforeunload', releaseCam);
 
   function showGateErr(html){
     gate.classList.remove('hide');
@@ -806,9 +925,12 @@ window.__log = [];
   // ===================== 调试（按 D） =====================
   setInterval(() => {
     if (!document.body.classList.contains('dbg-on')) return;
+    const vt = camStream && camStream.getVideoTracks()[0];
     dbgEl.textContent =
       'delegate  ' + G.delegate + '\n' +
       'detect    ' + G.det + '  hand ' + G.hand + '\n' +
+      'cam       ' + (vt ? (vt.readyState + (vt.muted ? ' (静音)' : '')) : '无') +
+        '  gen ' + camGen + (camRecovering ? ' 重连中' : '') + '\n' +
       'ratio     ' + G.raw.toFixed(3) + '\n' +
       'range     ' + G.min.toFixed(3) + ' → ' + G.max.toFixed(3) + '\n' +
       'open      ' + targetOpen.toFixed(3) + ' → ' + smoothOpen.toFixed(3) + '\n' +
@@ -830,6 +952,13 @@ window.__log = [];
   window.__lotus = {
     feed(lm){ handleResults({ landmarks: [lm] }, 10); },
     fakeCam(){ camOk = true; camBox.classList.remove('hide'); },
+    cam(){
+      const vt = camStream && camStream.getVideoTracks()[0];
+      return { ok: camOk, gen: camGen, recovering: camRecovering,
+               live: !!vt && vt.readyState === 'live', muted: !!vt && vt.muted,
+               ready: cam.readyState, t: cam.currentTime,
+               state: barStateText.textContent, bar: barLeft.textContent };
+    },
     state(){
       return { ratio: G.raw, open: targetOpen, smooth: smoothOpen,
                min: G.min, max: G.max,
